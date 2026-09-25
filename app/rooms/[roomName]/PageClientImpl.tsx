@@ -23,6 +23,7 @@ import {
   DeviceUnsupportedError,
   RoomConnectOptions,
   RoomEvent,
+  Track,
   TrackPublishDefaults,
   VideoCaptureOptions,
 } from 'livekit-client';
@@ -39,6 +40,7 @@ export function PageClientImpl(props: {
   region?: string;
   hq: boolean;
   codec: VideoCodec;
+  simulcast: boolean;
   singlePeerConnection: boolean;
 }) {
   const [preJoinChoices, setPreJoinChoices] = React.useState<LocalUserChoices | undefined>(
@@ -86,6 +88,7 @@ export function PageClientImpl(props: {
           options={{
             codec: props.codec,
             hq: props.hq,
+            simulcast: props.simulcast,
             singlePeerConnection: props.singlePeerConnection,
           }}
         />
@@ -100,6 +103,7 @@ function VideoConferenceComponent(props: {
   options: {
     hq: boolean;
     codec: VideoCodec;
+    simulcast: boolean;
     singlePeerConnection: boolean;
   };
 }) {
@@ -123,7 +127,11 @@ function VideoConferenceComponent(props: {
     };
     const publishDefaults: TrackPublishDefaults = {
       videoCodec,
-      simulcast: false, // 1-на-1: один полный слой
+      // Simulcast: полный слой + 720p. Нижний сервер отдаёт собеседнику, когда у того проседает приём;
+      // запись берёт верхний. Включать только тому, кто в одной сети с сервером (?simulcast=true):
+      // у собеседника второй слой никому не нужен и отъедал бы его канал у основного.
+      simulcast: props.options.simulcast,
+      videoSimulcastLayers: [VideoPresets.h720],
       videoEncoding: props.options.hq
         ? { maxBitrate: 16_000_000, maxFramerate: 30 }
         : { maxBitrate: 6_000_000, maxFramerate: 30 },
@@ -150,7 +158,7 @@ function VideoConferenceComponent(props: {
       e2ee: keyProvider && worker && e2eeEnabled ? { keyProvider, worker } : undefined,
       singlePeerConnection: props.options.singlePeerConnection,
     };
-  }, [props.userChoices, props.options.hq, props.options.codec]);
+  }, [props.userChoices, props.options.hq, props.options.codec, props.options.simulcast]);
 
   const room = React.useMemo(() => new Room(roomOptions), []);
 
@@ -176,6 +184,7 @@ function VideoConferenceComponent(props: {
           rows.push({
             who,
             kind: s.kind,
+            rid: s.rid, // слой simulcast: q — 720p, h — полный
             muted: pub?.isMuted,
             level: s.kind === 'audio' && level !== undefined ? Math.round(level * 1000) / 1000 : undefined,
             codec: codec?.mimeType,
@@ -203,6 +212,16 @@ function VideoConferenceComponent(props: {
         for (const pub of p.trackPublications.values()) await collect(p.identity, pub, 'inbound-rtp');
       console.table(rows);
       return rows;
+    };
+    // Тест записи при смене слоя: lkTop(false) выключает у себя верхний слой, lkTop(true) возвращает
+    w.lkTop = async (on: boolean) => {
+      const sender = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track?.sender;
+      if (!sender) return 'камера не опубликована';
+      const params = sender.getParameters();
+      if (params.encodings.length < 2) return 'simulcast выключен: слой один';
+      params.encodings[params.encodings.length - 1].active = on;
+      await sender.setParameters(params);
+      return params.encodings.map((e) => `${e.rid}:${e.active ? 'вкл' : 'выкл'}`).join(' ');
     };
   }, [room]);
 

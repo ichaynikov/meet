@@ -12,6 +12,7 @@ export default async function Page({
     region?: string;
     hq?: string;
     codec?: string;
+    simulcast?: string;
     singlePC?: string;
   }>;
 }) {
@@ -23,6 +24,8 @@ export default async function Page({
       : 'h264'; // проект: H.264 по умолчанию (docs/04-parameters.md)
   const hq = _searchParams.hq !== 'false'; // проект: максимум по умолчанию, ?hq=false — облегчённый режим
   const singlePC = _searchParams.singlePC !== 'false';
+  // simulcast только у того, кто в одной сети с сервером: ?simulcast=true (docs/04-parameters.md)
+  const simulcast = _searchParams.simulcast === 'true';
 
   return (
     <PageClientImpl
@@ -30,6 +33,7 @@ export default async function Page({
       region={_searchParams.region}
       hq={hq}
       codec={codec}
+      simulcast={simulcast}
       singlePeerConnection={singlePC}
     />
   );
