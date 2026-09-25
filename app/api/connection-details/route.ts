@@ -1,7 +1,14 @@
 import { randomString } from '@/lib/client-utils';
 import { getLiveKitURL } from '@/lib/getLiveKitURL';
 import { ConnectionDetails } from '@/lib/types';
-import { AccessToken, AccessTokenOptions, VideoGrant } from 'livekit-server-sdk';
+import {
+  AccessToken,
+  AccessTokenOptions,
+  AutoTrackEgress,
+  RoomConfiguration,
+  RoomEgress,
+  VideoGrant,
+} from 'livekit-server-sdk';
 import { NextRequest, NextResponse } from 'next/server';
 
 const API_KEY = process.env.LIVEKIT_API_KEY;
@@ -77,6 +84,18 @@ function createParticipantToken(userInfo: AccessTokenOptions, roomName: string) 
     canSubscribe: true,
   };
   at.addGrant(grant);
+
+  // Автозапись в самом токене: если вход СОЗДАЁТ комнату, сервер берёт её конфигурацию
+  // отсюда (livekit pkg/service/utils.go: SetRoomConfiguration -> createRequest.Egress).
+  // Так любая комната сразу пишется, без шага «создать заранее» и без ловушки таймаута.
+  // Только локальный путь: учётные данные (S3 и т.п.) в токен класть нельзя — токен видит клиент.
+  const trackEgressPath =
+    process.env.LIVEKIT_TRACK_EGRESS_FILEPATH ?? '/out/{room_name}/{time}-{publisher_identity}-{track_type}';
+  if (trackEgressPath) {
+    at.roomConfig = new RoomConfiguration({
+      egress: new RoomEgress({ tracks: new AutoTrackEgress({ filepath: trackEgressPath }) }),
+    });
+  }
   return at.toJwt();
 }
 

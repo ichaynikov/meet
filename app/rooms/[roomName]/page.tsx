@@ -20,8 +20,8 @@ export default async function Page({
   const codec =
     typeof _searchParams.codec === 'string' && isVideoCodec(_searchParams.codec)
       ? _searchParams.codec
-      : 'vp9';
-  const hq = _searchParams.hq === 'true' ? true : false;
+      : 'h264'; // проект: H.264 по умолчанию (docs/04-parameters.md)
+  const hq = _searchParams.hq !== 'false'; // проект: максимум по умолчанию, ?hq=false — облегчённый режим
   const singlePC = _searchParams.singlePC !== 'false';
 
   return (

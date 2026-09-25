@@ -110,36 +110,101 @@ function VideoConferenceComponent(props: {
   const [e2eeSetupComplete, setE2eeSetupComplete] = React.useState(false);
 
   const roomOptions = React.useMemo((): RoomOptions => {
-    let videoCodec: VideoCodec | undefined = props.options.codec ? props.options.codec : 'vp9';
+    // === Параметры проекта (docs/04-parameters.md) ===
+    // Кодек по умолчанию H.264: единственный, который и кодируется аппаратно на Mac, и пишется egress.
+    let videoCodec: VideoCodec | undefined = props.options.codec ? props.options.codec : 'h264';
     if (e2eeEnabled && (videoCodec === 'av1' || videoCodec === 'vp9')) {
       videoCodec = undefined;
     }
     const videoCaptureDefaults: VideoCaptureOptions = {
       deviceId: props.userChoices.videoDeviceId ?? undefined,
-      resolution: props.options.hq ? VideoPresets.h2160 : VideoPresets.h720,
+      // по умолчанию 1080p (фаза 5), ?hq=true — 4K
+      resolution: props.options.hq ? VideoPresets.h2160.resolution : VideoPresets.h1080.resolution,
     };
     const publishDefaults: TrackPublishDefaults = {
-      dtx: false,
-      videoSimulcastLayers: props.options.hq
-        ? [VideoPresets.h1080, VideoPresets.h720]
-        : [VideoPresets.h540, VideoPresets.h216],
-      red: !e2eeEnabled,
       videoCodec,
+      simulcast: false, // 1-на-1: один полный слой
+      videoEncoding: props.options.hq
+        ? { maxBitrate: 16_000_000, maxFramerate: 30 }
+        : { maxBitrate: 6_000_000, maxFramerate: 30 },
+      degradationPreference: 'maintain-resolution',
+      audioPreset: { maxBitrate: 510_000 }, // встроенный максимум musicHighQualityStereo — всего 128k
+      forceStereo: true,
+      red: false, // RED ломает запись: egress пишет audio/red как тишину (-91 дБ), проверено 25.09
+      dtx: false,
     };
     return {
       videoCaptureDefaults: videoCaptureDefaults,
       publishDefaults: publishDefaults,
       audioCaptureDefaults: {
         deviceId: props.userChoices.audioDeviceId ?? undefined,
+        echoCancellation: false, // НАУШНИКИ обязательны
+        noiseSuppression: false,
+        autoGainControl: false,
+        voiceIsolation: false,
+        channelCount: 2,
+        sampleRate: 48000,
       },
-      adaptiveStream: true,
-      dynacast: true,
+      adaptiveStream: false,
+      dynacast: false,
       e2ee: keyProvider && worker && e2eeEnabled ? { keyProvider, worker } : undefined,
       singlePeerConnection: props.options.singlePeerConnection,
     };
   }, [props.userChoices, props.options.hq, props.options.codec]);
 
   const room = React.useMemo(() => new Room(roomOptions), []);
+
+  // === Отладка: в консоли браузера доступны window.room и lkStats() ===
+  React.useEffect(() => {
+    const w = window as any;
+    w.room = room;
+    w.lkStats = async () => {
+      const rows: Record<string, unknown>[] = [];
+      const collect = async (who: string, pub: any, dir: 'outbound-rtp' | 'inbound-rtp') => {
+        const track: any = pub?.track;
+        if (!track?.getRTCStatsReport) return;
+        const report: RTCStatsReport | undefined = await track.getRTCStatsReport();
+        const st: any = track.mediaStreamTrack?.getSettings?.() ?? {};
+        // уровень сигнала с микрофона (0..1): около нуля при речи — микрофон молчит или выключен
+        let level: number | undefined;
+        report?.forEach((m: any) => {
+          if (m.type === 'media-source' && m.audioLevel !== undefined) level = m.audioLevel;
+        });
+        report?.forEach((s: any) => {
+          if (s.type !== dir) return;
+          const codec: any = s.codecId ? report.get(s.codecId) : undefined;
+          rows.push({
+            who,
+            kind: s.kind,
+            muted: pub?.isMuted,
+            level: s.kind === 'audio' && level !== undefined ? Math.round(level * 1000) / 1000 : undefined,
+            codec: codec?.mimeType,
+            fmtp: codec?.sdpFmtpLine,
+            impl: dir === 'outbound-rtp' ? s.encoderImplementation : s.decoderImplementation,
+            hw: dir === 'outbound-rtp' ? s.powerEfficientEncoder : s.powerEfficientDecoder,
+            size: s.frameWidth ? `${s.frameWidth}x${s.frameHeight}` : undefined,
+            fps: s.framesPerSecond,
+            kbps: s.targetBitrate ? Math.round(s.targetBitrate / 1000) : undefined,
+            limit: s.qualityLimitationReason,
+            lost: s.packetsLost,
+            // сколько раз получатели просили ключевой кадр и сколько их реально закодировано
+            pli: dir === 'outbound-rtp' ? s.pliCount : undefined,
+            nack: dir === 'outbound-rtp' ? s.nackCount : undefined,
+            keyframes: dir === 'outbound-rtp' ? s.keyFramesEncoded : s.keyFramesDecoded,
+            jitterMs: s.jitter !== undefined ? Math.round(s.jitter * 1000) : undefined,
+            capture: who !== 'я' ? undefined : st.width
+              ? `${st.width}x${st.height}@${st.frameRate}`
+              : `${st.channelCount}ch ${st.sampleRate}Hz aec=${st.echoCancellation} ns=${st.noiseSuppression} agc=${st.autoGainControl}`,
+          });
+        });
+      };
+      for (const pub of room.localParticipant.trackPublications.values()) await collect('я', pub, 'outbound-rtp');
+      for (const p of room.remoteParticipants.values())
+        for (const pub of p.trackPublications.values()) await collect(p.identity, pub, 'inbound-rtp');
+      console.table(rows);
+      return rows;
+    };
+  }, [room]);
 
   React.useEffect(() => {
     if (e2eeEnabled) {
