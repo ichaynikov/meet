@@ -38,6 +38,7 @@ const SHOW_SETTINGS_MENU = process.env.NEXT_PUBLIC_SHOW_SETTINGS_MENU == 'true';
 export function PageClientImpl(props: {
   roomName: string;
   region?: string;
+  invite?: string;
   hq: boolean;
   codec: VideoCodec;
   simulcast: boolean;
@@ -62,10 +63,19 @@ export function PageClientImpl(props: {
     const url = new URL(CONN_DETAILS_ENDPOINT, window.location.origin);
     url.searchParams.append('roomName', props.roomName);
     url.searchParams.append('participantName', values.username);
+    if (props.invite) {
+      url.searchParams.append('invite', props.invite);
+    }
     if (props.region) {
       url.searchParams.append('region', props.region);
     }
     const connectionDetailsResp = await fetch(url.toString());
+    if (!connectionDetailsResp.ok) {
+      // без действующего приглашения сервер пропуск не выдаёт (app/api/connection-details)
+      alert(await connectionDetailsResp.text());
+      setPreJoinChoices(undefined);
+      return;
+    }
     const connectionDetailsData = await connectionDetailsResp.json();
     setConnectionDetails(connectionDetailsData);
   }, []);

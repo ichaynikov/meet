@@ -1,4 +1,5 @@
 import { randomString } from '@/lib/client-utils';
+import { isInviteValid } from '@/lib/invite';
 import { getLiveKitURL } from '@/lib/getLiveKitURL';
 import { ConnectionDetails } from '@/lib/types';
 import {
@@ -38,6 +39,11 @@ export async function GET(request: NextRequest) {
     }
     if (participantName === null) {
       return new NextResponse('Missing required query parameter: participantName', { status: 400 });
+    }
+    // Пропуск выдаётся только по действующему приглашению в эту комнату (lib/invite.ts)
+    const invite = request.nextUrl.searchParams.get('invite');
+    if (!API_SECRET || !isInviteValid(roomName, invite, API_SECRET)) {
+      return new NextResponse('Ссылка-приглашение недействительна или устарела', { status: 403 });
     }
 
     // Generate participant token

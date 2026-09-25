@@ -13,6 +13,7 @@ export default async function Page({
     hq?: string;
     codec?: string;
     simulcast?: string;
+    invite?: string;
     singlePC?: string;
   }>;
 }) {
@@ -31,6 +32,7 @@ export default async function Page({
     <PageClientImpl
       roomName={_params.roomName}
       region={_searchParams.region}
+      invite={typeof _searchParams.invite === 'string' ? _searchParams.invite : undefined}
       hq={hq}
       codec={codec}
       simulcast={simulcast}
